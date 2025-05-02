@@ -7,3 +7,345 @@ author:
 format: html
 ---
 
+```{r}
+# spatial data science
+library(tidyverse)
+library(sf)
+library(units)
+
+# Data
+library(AOI)
+
+# Visualization
+library(gghighlight)
+library(ggrepel)
+library(knitr)
+```
+
+Question 1:
+```{r}
+#Q 1.1
+eqdc <- '+proj=eqdc +lat_0=40 +lon_0=-96 +lat_1=20 +lat_2=60 +x_0=0 +y_0=0 +datum=NAD83 +units=m +no_defs'
+
+#Q 1.2
+remotes::install_github("mikejohnson51/AOI")
+remotes::install_github("ropensci/USAboundaries")
+remotes::install_github("ropensci/USAboundariesData")
+remotes::install_github("ropenscilabs/rnaturalearthdata")
+
+#Q 1.3
+aoi_get(country = c("MX", "CA", "USA"))
+
+eqdc <- st_crs(5070)
+
+countries <- rnaturalearth::countries110 |>
+  st_transform(eqdc)
+
+#Q 1.4
+library(readr)
+cities <- readr::read_csv("data/uscities.csv", show_col_types = FALSE) |>
+  st_as_sf(coords = c("lng", "lat"), crs = 4326) |>
+  st_transform(eqdc)
+
+plot(cities$geometry, pch = 16, cex = .1)
+
+```
+
+Question 2:
+```{r}
+#Q 2.1 Distance to US border
+
+states <- USAboundaries::us_states(resolution = "low") |>
+  filter(!state_abbr %in% c("HI", "AK", "PR")) |>
+  st_transform(eqdc)
+
+conus_state_ids <- states$state_abbr
+
+cities <- read_csv("data/uscities.csv", show_col_types = FALSE) %>%
+  filter(state_id %in% conus_state_ids)
+
+cities_sf <- st_as_sf(cities, coords = c("lng", "lat"), crs = 4326)
+
+usa_dissolved <- st_union(states)
+
+usa_outer_boundary <- st_boundary(usa_dissolved)
+usa_outer_boundary <- st_cast(usa_outer_boundary, "MULTILINESTRING")
+
+cities_proj <- st_transform(cities_sf, 5070)
+border_proj <- st_transform(usa_outer_boundary, 5070)
+
+distances <- st_distance(cities_proj, border_proj)
+cities$dist_to_us_border_m <- as.numeric(distances)
+
+top5_border <- cities %>%
+  select(city, state_id, dist_to_us_border_m) %>%
+  mutate(distance_km = round(dist_to_us_border_m / 1000, 2)) %>%
+  arrange(desc(distance_km)) %>%
+  slice(1:5)
+
+flextable::flextable(top5_border)
+
+```
+
+```{r}
+#Q 2.2 Distance to state border
+state_borders <- st_boundary(states)
+
+state_borders_multiline <- st_union(state_borders)
+state_borders_multiline <- st_cast(state_borders_multiline, "MULTILINESTRING")
+
+conus_state_ids <- states$state_abbr
+
+cities_proj <- st_transform(cities_sf, 5070)
+borders_proj <- st_transform(state_borders_multiline, 5070)
+
+distances <- st_distance(cities_proj, borders_proj)
+cities$dist_to_state_border_m <- as.numeric(distances)
+
+top5_states <- cities %>%
+  select(city, state_id, dist_to_state_border_m) %>%
+  mutate(distance_km = round(dist_to_state_border_m / 1000, 2)) %>%
+  arrange(desc(distance_km)) %>%
+  slice(1:5)
+
+flextable::flextable(top5_states)
+
+```
+
+```{r}
+#Q 2.3 Distance to Mexico
+
+mexico <- countries %>% filter(ADMIN == "Mexico")
+mexico_border <- st_boundary(mexico)
+mexico_border <- st_cast(mexico_border, "MULTILINESTRING")
+mexico_proj <- st_transform(mexico_border, 5070)
+
+mexico_distances <- st_distance(cities_proj, mexico_proj)
+cities$dist_to_mexico_m <- as.numeric(mexico_distances)
+
+top5_mexico <- cities %>%
+  select(city, state_id, dist_to_mexico_m) %>%
+  mutate(distance_km = round(dist_to_mexico_m / 1000, 2)) %>%
+  arrange(desc(distance_km)) %>%
+  slice(1:5)
+
+flextable::flextable(top5_mexico)
+```
+
+```{r}
+#Q 2.4 Distance to Canada
+
+canada <- countries %>% filter(ADMIN == "Canada")
+canada_border <- st_boundary(canada)
+canada_border <- st_cast(canada_border, "MULTILINESTRING")
+canada_proj <- st_transform(canada_border, 5070)
+
+canada_distances <- st_distance(cities_proj, canada_proj)
+cities$dist_to_canada_m <- as.numeric(canada_distances)
+
+top5_canada <- cities %>%
+  select(city, state_id, dist_to_canada_m) %>%
+  mutate(distance_km = round(dist_to_canada_m / 1000, 2)) %>%
+  arrange(desc(distance_km)) %>%
+  slice(1:5)
+
+flextable::flextable(top5_canada)
+
+```
+
+Question 3:
+```{r}
+#Q 3.1 Data
+
+countries3 <- countries %>%
+  filter(ADMIN %in% c("Canada", "Mexico", "United States of America"))
+
+conus_outline <- st_union(states)
+
+top10_cities <- read_csv("data/uscities.csv", show_col_types = FALSE) %>%
+  filter(state_id %in% states$state_abbr) %>%
+  arrange(desc(population)) %>%
+  slice(1:10)
+
+top10_cities_sf <- st_as_sf(top10_cities, coords = c("lng", "lat"), crs = 4326)
+
+ggplot() +
+  geom_sf(data = countries3, fill = "gray") +
+  geom_sf(data = conus_outline, lty = "dashed") +
+  geom_sf(data = states) +
+  geom_sf(data = top10_cities_sf) +
+  ggrepel::geom_label_repel(
+    data = top10_cities_sf,
+    aes(label = city, geometry = geometry),
+    stat = "sf_coordinates") +
+  theme_void()
+
+
+```
+
+```{r}
+#Q 3.2 City Distance from Border
+
+top5_national <- cities %>%
+  arrange(desc(dist_to_us_border_m)) %>%
+  slice(1:5)
+
+top5_national_sf <- st_as_sf(top5_national, coords = c("lng", "lat"), crs = 4326)
+
+ggplot() +
+  geom_sf(data = countries3, fill = "gray") +
+  geom_sf(data = conus_outline, lty = "dashed") +
+  geom_sf(data = states) +
+  geom_sf(data = top5_national_sf) +
+  ggrepel::geom_label_repel(
+    data = top5_national_sf,
+    aes(label = city, geometry = geometry),
+    stat = "sf_coordinates") +
+  theme_void()
+
+```
+
+```{r}
+#Q 3.3 City Distance from Nearest State
+
+top5_statedist <- cities %>%
+  arrange(desc(dist_to_state_border_m)) %>%
+  slice(1:5)
+
+top5_states_sf <- st_as_sf(top5_statedist, coords = c("lng", "lat"), crs = 4326)
+
+ggplot() +
+  geom_sf(data = countries3, fill = "gray") +
+  geom_sf(data = conus_outline, lty = "dashed") +
+  geom_sf(data = states) +
+  geom_sf(data = top5_states_sf) +
+  ggrepel::geom_label_repel(
+    data = top5_states_sf,
+    aes(label = city, geometry = geometry),
+    stat = "sf_coordinates") +
+  theme_void()
+
+
+```
+
+```{r}
+#Q 3.4 Equidistance boundary from Mexico and Canada
+
+cities$dist_to_mexico <- as.numeric(st_distance(cities_proj, mexico_proj))
+cities$dist_to_canada <- as.numeric(st_distance(cities_proj, canada_proj))
+
+cities$border_diff <- abs(cities$dist_to_mexico - cities$dist_to_canada)
+
+equal_zone <- cities %>%
+  filter(border_diff <= 100000)
+
+top5_equal <- equal_zone %>%
+  arrange(desc(population)) %>%
+  slice(1:5)
+
+top5_equal_sf <- st_as_sf(top5_equal, coords = c("lng", "lat"), crs = 4326)
+
+ggplot() +
+  geom_sf(data = countries3, fill = "gray") +
+  geom_sf(data = conus_outline, lty = "dashed") +
+  geom_sf(data = states) +
+  geom_sf(data = top5_equal_sf) +
+  ggrepel::geom_label_repel(
+    data = top5_equal_sf,
+    aes(label = city, geometry = geometry),
+    stat = "sf_coordinates") +
+  theme_void()
+
+
+```
+
+Question 4:
+```{r}
+#Q 4.1 Quantifing Border Zone
+
+threshold_m <- 160934
+
+border_zone <- cities %>%
+  filter(dist_to_mexico <= threshold_m | dist_to_canada <= threshold_m)
+
+total_cities <- nrow(cities)
+total_population <- sum(cities$population, na.rm = TRUE)
+
+border_cities <- nrow(border_zone)
+border_population <- sum(border_zone$population, na.rm = TRUE)
+
+border_pct <- (border_population / total_population) * 100
+
+library(tibble)
+library(flextable)
+
+summary_tbl <- tibble(
+  `Metric` = c("Total cities", "Cities in 100-mile border zone",
+               "Total population", "Population in border zone", 
+               "Percent of total population in zone"),
+  `Value` = c(
+    formatC(total_cities, format = "d", big.mark = ","),
+    formatC(border_cities, format = "d", big.mark = ","),
+    formatC(total_population, format = "d", big.mark = ","),
+    formatC(border_population, format = "d", big.mark = ","),
+    sprintf("%.1f%%", border_pct)))
+
+flextable(summary_tbl)
+
+
+```
+
+```{r}
+#Q 4.2 Mapping Border Zone
+
+danger_cities <- cities %>%
+  filter(dist_to_mexico_m <= 160934 | dist_to_canada_m <= 160934)
+
+danger_cities_sf <- st_as_sf(danger_cities, coords = c("lng", "lat"), crs = 4326)
+
+top10_danger <- danger_cities %>%
+  arrange(desc(population)) %>%
+  slice(1:10)
+
+top10_danger_sf <- st_as_sf(top10_danger, coords = c("lng", "lat"), crs = 4326)
+
+ggplot() +
+  geom_sf(data = states) +
+  geom_sf(data = danger_cities_sf, aes(color = population)) +
+  ggrepel::geom_label_repel(
+    data = top10_danger_sf,
+    aes(label = city, geometry = geometry),
+    stat = "sf_coordinates") +
+  scale_color_gradient(low = "orange", high = "darkred") +
+  gghighlight(dist_to_mexico_m <= 160934 | dist_to_canada_m <= 160934) +
+  theme_void() +
+  theme(legend.position = "bottom")
+
+
+```
+
+```{r}
+#Q 4.3 :
+
+top_city_by_state <- danger_cities %>%
+  group_by(state_name) %>%
+  slice_max(order_by = population, n = 1, with_ties = FALSE) %>%
+  ungroup()
+
+top_city_sf <- st_as_sf(top_city_by_state, coords = c("lng", "lat"), crs = 4326)
+top_city_sf_proj <- st_transform(top_city_sf, 5070)
+
+ggplot() +
+  geom_sf(data = states) +
+  geom_sf(data = top_city_sf_proj, color = "red") +
+  ggrepel::geom_label_repel(
+    data = top_city_sf_proj,
+    aes(label = city, geometry = geometry),
+    stat = "sf_coordinates") +
+  theme_void()
+
+
+```
+
+
+
